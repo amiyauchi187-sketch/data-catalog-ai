@@ -1,0 +1,22 @@
+# 依存パッケージ
+node_modules
+
+# 環境変数（.env.example はひな形なのでコミットする）
+.env*
+!.env.example
+
+# Next.js のビルド結果
+/.next/
+/out/
+/build
+*.tsbuildinfo
+next-env.d.ts
+
+# テスト・デプロイ
+/coverage
+.vercel
+
+# その他
+.DS_Store
+*.pem
+npm-debug.log*
