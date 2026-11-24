@@ -74,4 +74,46 @@ export type ChangeLog = {
   note: string | null;
   changed_by: string | null;
   changed_at: string;
+  suggestion_id: string | null;
+  suggested_value: unknown;
+  ai_decision: 'accepted' | 'modified' | 'rejected' | null;
+};
+
+export type AiDecision = 'pending' | 'accepted' | 'modified' | 'rejected' | 'superseded';
+
+/** AIが提案する項目。change_logs.field と同じ名前 */
+export type AiField =
+  | 'description'
+  | 'domain'
+  | 'tags'
+  | 'sensitivity'
+  | 'column.description'
+  | 'column.sensitivity'
+  | 'column.is_pii';
+
+export type AiSuggestion = {
+  id: string;
+  run_id: string;
+  dataset_id: string;
+  column_id: string | null;
+  column_name: string | null;
+  field: AiField;
+  suggested_value: unknown;
+  reason: string | null;
+  decision: AiDecision;
+  final_value: unknown;
+  decided_by: string | null;
+  decided_at: string | null;
+  decided_in_bulk: boolean;
+  created_at: string;
+};
+
+export type AiSuggestionStat = {
+  field: AiField;
+  model: string;
+  prompt_version: string;
+  accepted: number;
+  modified: number;
+  rejected: number;
+  decided_in_bulk: number;
 };

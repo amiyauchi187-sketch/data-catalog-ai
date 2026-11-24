@@ -23,6 +23,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - テストデータはすべて架空のものを使う。実在の人物・組織・顧客のデータをコピーして使わない
 
 ## 禁止事項
-- 外部のライブラリ（npmパッケージ）を勝手に追加しない。必要なら先に提案する。ただし Next.js と Supabase の利用に必要な公式パッケージ、および Tailwind CSS は除く
+- 外部のライブラリ（npmパッケージ）を勝手に追加しない。必要なら先に提案する。ただし Next.js と Supabase の利用に必要な公式パッケージ、Tailwind CSS、および Claude API の公式SDK（`@anthropic-ai/sdk`）は除く
 - 保存されているデータを、指示なく削除・上書きしない
 - git push は私が指示したときだけ行う
