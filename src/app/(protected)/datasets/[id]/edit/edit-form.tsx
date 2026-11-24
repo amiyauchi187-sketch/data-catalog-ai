@@ -6,6 +6,7 @@ import { startTransition, useActionState, type FormEvent } from 'react';
 import type { Dataset, DatasetColumn, Profile } from '@/types/database';
 import {
   COLUMN_SENSITIVITY_LABELS,
+  DATASET_NAME_NOTICE,
   DATA_TYPE_LABELS,
   DOMAIN_LABELS,
   SENSITIVITY_LABELS,
@@ -59,7 +60,7 @@ export function EditForm({ dataset, columns, tags, stewards }: Props) {
       <ErrorList state={state} />
 
       <Card title="業務メタデータ">
-        <Field label="名称">
+        <Field label="名称" hint={DATASET_NAME_NOTICE}>
           <input name="name" defaultValue={dataset.name} required maxLength={100} className={inputClass} />
         </Field>
         <Field label="説明" hint="承認依頼には必須です">

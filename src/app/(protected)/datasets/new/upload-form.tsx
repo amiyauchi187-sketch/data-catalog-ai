@@ -7,7 +7,7 @@ import { analyzeCsv, type AnalyzedCsv } from '@/lib/csv/analyze';
 import { piiReasonLabel } from '@/lib/csv/detect-pii';
 import { MASK } from '@/lib/csv/mask';
 import { buildCreatePayload, defaultDatasetName } from '@/lib/datasets/payload';
-import { DATA_TYPE_LABELS, ENCODING_LABELS } from '@/lib/datasets/labels';
+import { DATASET_NAME_NOTICE, DATA_TYPE_LABELS, ENCODING_LABELS } from '@/lib/datasets/labels';
 import { ErrorList, Field, buttonClass, inputClass, type ActionState } from '@/components/form-parts';
 import { formatNumber, formatPercent } from '@/components/format';
 import { createDataset } from '../actions';
@@ -78,7 +78,7 @@ export function UploadForm() {
         <>
           <Summary loaded={loaded} />
           <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <Field label="データセットの名称">
+            <Field label="データセットの名称" hint={DATASET_NAME_NOTICE}>
               <input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} className={inputClass} />
             </Field>
           </div>

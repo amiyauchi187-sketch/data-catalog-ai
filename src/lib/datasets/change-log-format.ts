@@ -1,7 +1,8 @@
 // 変更履歴の値（jsonb）を画面に出す文字列にする
 
-import type { Profile } from '../../types/database.ts';
+import type { ChangeLog, Profile } from '../../types/database.ts';
 import {
+  AI_DECISION_LABELS,
   COLUMN_SENSITIVITY_LABELS,
   DOMAIN_LABELS,
   SENSITIVITY_LABELS,
@@ -28,6 +29,10 @@ function labelOf(labels: Record<string, string>, value: string): string {
 
 export function describeLogValue(field: string, value: unknown, profiles: Map<string, Profile>): string {
   if (value === null || value === undefined) return '—';
+  if (field === 'ai_suggested' && typeof value === 'object') {
+    const v = value as { count?: number; model?: string; prompt_version?: string };
+    return `${v.count ?? 0}件（${v.model ?? '不明'}、${v.prompt_version ?? '不明'}）`;
+  }
   if (field === 'sensitivity' && Array.isArray(value)) {
     return value.length === 0 ? '未設定' : value.map((v) => labelOf(SENSITIVITY_LABELS, String(v))).join('＋');
   }
@@ -44,4 +49,14 @@ export function describeLogValue(field: string, value: unknown, profiles: Map<st
     return labelOf(CHOICE_LABELS[field], value);
   }
   return shorten(typeof value === 'string' ? value : JSON.stringify(value));
+}
+
+/** AIの判断を含む履歴なら「AI提案：◯◯ → 採用」のような文を返す。AIと関係なければ null */
+export function describeAiDecision(
+  log: Pick<ChangeLog, 'field' | 'ai_decision' | 'suggested_value'>,
+  profiles: Map<string, Profile>,
+): string | null {
+  if (!log.ai_decision) return null;
+  const suggested = describeLogValue(log.field, log.suggested_value, profiles);
+  return `AI提案：${suggested} → ${AI_DECISION_LABELS[log.ai_decision]}`;
 }

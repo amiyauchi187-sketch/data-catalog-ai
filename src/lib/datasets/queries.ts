@@ -2,7 +2,15 @@
 
 import 'server-only';
 import { createClient } from '../supabase/server';
-import type { ChangeLog, ColumnSample, Dataset, DatasetColumn, Profile } from '../../types/database';
+import type {
+  AiSuggestion,
+  AiSuggestionStat,
+  ChangeLog,
+  ColumnSample,
+  Dataset,
+  DatasetColumn,
+  Profile,
+} from '../../types/database';
 import type { SearchFilters } from './search-params';
 
 function nullIfEmpty<T>(values: T[]): T[] | null {
@@ -92,4 +100,29 @@ export async function getChangeLogs(datasetId: string): Promise<ChangeLog[]> {
     .order('id', { ascending: false });
   if (error) throw failed('変更履歴');
   return (data ?? []) as ChangeLog[];
+}
+
+/** 未判断のAI提案（スチュワードにだけ返る） */
+export async function getPendingSuggestions(datasetId: string): Promise<AiSuggestion[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('ai_suggestions')
+    .select('*')
+    .eq('dataset_id', datasetId)
+    .eq('decision', 'pending')
+    .order('created_at');
+  if (error) throw failed('AI提案');
+  return (data ?? []) as AiSuggestion[];
+}
+
+/** AI提案の採用率の集計（スチュワードにだけ返る） */
+export async function getSuggestionStats(): Promise<AiSuggestionStat[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('ai_suggestion_stats')
+    .select('*')
+    .order('prompt_version')
+    .order('field');
+  if (error) throw failed('AI提案の集計');
+  return (data ?? []) as AiSuggestionStat[];
 }

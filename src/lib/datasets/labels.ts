@@ -78,7 +78,19 @@ export const FIELD_LABELS: Record<string, string> = {
   'column.sensitivity': '列の機微度',
   'column.is_pii': '個人情報',
   'column.sample_masked': 'サンプルを伏せた',
+  ai_suggested: 'AI提案を作成',
 };
+
+/** AI提案の判断結果 */
+export const AI_DECISION_LABELS: Record<'accepted' | 'modified' | 'rejected', string> = {
+  accepted: '採用',
+  modified: '修正して採用',
+  rejected: '却下',
+};
+
+/** データセット名の欄に出す注意書き（名称はAIに送られるため） */
+export const DATASET_NAME_NOTICE =
+  '機密情報（顧客名・個人名・取引先名など）を含めないでください。名称はAIの提案のために送られます';
 
 export function sensitivityText(values: Sensitivity[]): string {
   if (values.length === 0) return '未設定';

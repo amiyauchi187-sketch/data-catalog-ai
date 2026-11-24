@@ -14,6 +14,11 @@ export default async function ProtectedLayout({ children }: { children: React.Re
             AIデータカタログ
           </Link>
           <div className="flex items-center gap-4 text-sm">
+            {user.isSteward && (
+              <Link href="/ai-stats" className="text-sky-700 hover:underline">
+                AI提案の採用率
+              </Link>
+            )}
             <span>
               {user.display_name}
               <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">

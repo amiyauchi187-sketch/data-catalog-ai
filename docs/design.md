@@ -1,4 +1,4 @@
-# 設計：AIデータカタログ（要件第2版対応／2026/11/9〜15、AIなし）
+# 設計：AIデータカタログ（要件第2版対応／2026/11/9〜22）
 
 要件は [requirements.md](requirements.md)（第2版）を参照。
 
@@ -19,7 +19,8 @@
 ## 範囲
 
 - 含む（5.1〜5.5）：ログイン、CSV登録、列情報の自動読み取り、メタデータの手入力、承認の流れ、一覧・詳細・検索、機微度によるサンプルの出し分け（RLS）、変更履歴、サンプルCSV、テスト、Vercelへの公開
-- 含まない：AIによる提案（5.6）、質問への回答（5.7）、用語集（5.8）。テーブルは「[5.6以降のための余地](#56以降のための余地)」のとおり、後から足す
+- 含む（5.6、6）：AIによるメタデータ提案（[AIによるメタデータ提案](#aiによるメタデータ提案566)）
+- 含まない：質問への回答（5.7）、用語集（5.8）。「[5.7以降のための余地](#57以降のための余地)」のとおり、後から足す
 
 ## 方針
 
@@ -389,15 +390,106 @@ language sql stable security invoker
 - キーワードは `ILIKE` で、`%` と `_` はエスケープする。50件程度なので全文検索や trigram の索引は使わない
 - 閲覧者が `statuses` に `draft` を指定しても、RLSで公開中しか返らない
 
-## 5.6以降のための余地
+## AIによるメタデータ提案（5.6、6）
 
-今週はテーブルを作らない。後からマイグレーションで足すものと、今の設計で備えている点を書いておく。
+### 方針
+
+- AIに送るデータは、DBに保存済みの列情報と伏せたサンプルから、送ってよい項目だけを書き出して作る（許可リスト）。送る直前にもう一度伏せる
+- 提案は `ai_suggestions` に項目ごとに保存する。データセット本体とは別のテーブルなので、採用されるまで本体の項目には入らない。採用した後も、公開には従来どおり承認が要る
+- 判断（採用・修正・却下）はDB関数だけが行い、値の反映と変更履歴の記録を1つのトランザクションで行う
+- AIの呼び出しは `MetadataSuggester` の裏に隠す。本番は Claude（`@anthropic-ai/sdk`）、テストと動作確認は決まった提案を返す偽物
+
+### AIに送るデータ（要件6）
+
+`src/lib/ai/build-input.ts` が作る。
+
+| 送る | 送らない |
+|---|---|
+| データセット名、件数、列数、列ごとの列名・型・欠損率・ユニーク数・サンプル値（最大5件） | 説明、ドメイン、タグ、機微度、オーナー、担当スチュワード、利用上の注意、出所、ファイル名、列の説明 |
+
+- `is_pii` の列のサンプルは、保存時に伏せてあっても `***` にし直す
+- 列を問わず、メールアドレス・電話番号の形の値（`src/lib/csv/detect-pii.ts` の判定）は `***` にする
+- データセット名は送るので、登録画面と編集画面の名称欄に「機密情報（顧客名・個人名・取引先名など）を含めないでください」と表示する
+- サンプル値に指示のような文があっても従わないよう、システムプロンプトに書く
+
+### 呼び出しと構造化出力
+
+| 項目 | 値 |
+|---|---|
+| モデル | `claude-opus-5-5`、`output_config.effort: "medium"`、`max_tokens: 16000` |
+| 出力 | `output_config.format` に JSON Schema（`src/lib/ai/suggestion-schema.ts`）。Zod は使わない |
+| 断られたとき | サーバー側のフォールバック（beta `server-side-fallback-2026-07-01`、`fallbacks: "default"`）。それでも `refusal`、または `max_tokens` で切れたら日本語のエラー |
+| プロンプトの版 | `src/lib/ai/prompt.ts` の `PROMPT_VERSION`。変えたら上げる（採用率を版ごとに比べる） |
+
+返答の形：
+
+```json
+{
+  "dataset": { "description": "…", "domain": "customer", "tags": ["…"], "sensitivity": ["personal"], "reason": "…" },
+  "columns": [{ "name": "氏名", "description": "…", "sensitivity": "internal", "is_pii": true, "reason": "…" }]
+}
+```
+
+`src/lib/ai/validate-output.ts` で、列名が送った列と1対1か、値が選択肢の中か、機微度の組み合わせ、個人情報の列を「公開」にしていないか、文字数・タグ数を確かめる。1つでも外れたら保存しない。
+
+### テーブル
+
+**ai_suggestion_runs**（AIを1回呼ぶごとに1行）：`dataset_id`、`model`、`prompt_version`、`input_tokens`、`output_tokens`、`requested_by`、`created_at`
+
+**ai_suggestions**（項目ごとに1行）
+
+| 列 | 説明 |
+|---|---|
+| `run_id`、`dataset_id`、`column_id`、`column_name` | 列の項目のときだけ `column_id` が入る |
+| `field` | `change_logs.field` と同じ名前：`description`／`domain`／`tags`／`sensitivity`／`column.description`／`column.sensitivity`／`column.is_pii` |
+| `suggested_value` jsonb、`reason` | 提案値と根拠 |
+| `decision` | `pending`（未判断）／`accepted`（採用）／`modified`（修正して採用）／`rejected`（却下）／`superseded`（提案させ直して置き換えた） |
+| `final_value` jsonb | 確定値。採用なら提案値と同じ、却下なら空 |
+| `decided_by`、`decided_at`、`decided_in_bulk` | 判断した人・日時、まとめて判断したか |
+
+- CHECK制約で、判断の結果ごとに確定値と判断者をそろえる
+- RLS：読めるのはスチュワードだけ。書き込み権限は付けず、DB関数だけが書く
+
+**change_logs** に `suggestion_id`、`suggested_value`、`ai_decision` を足し、提案値と確定値（`new_value`）を1行で追えるようにする。
+
+### DB関数
+
+| 関数 | 内容 |
+|---|---|
+| `save_ai_suggestions(dataset_id, model, prompt_version, usage, items)` | 下書きだけ。前回の未判断の提案を `superseded` にし、実行記録と提案を保存する。履歴に `ai_suggested`（件数・モデル・版）を1行 |
+| `decide_ai_suggestion(id, decision, final)` | 下書き・未判断の提案だけ。採用・修正なら値を反映する（タグは `set_dataset_tags`、個人情報は `set_column_pii` を通す）。修正した値が提案と同じ（空白や並び順の違いだけ）なら `accepted` にそろえる |
+| `decide_ai_suggestions_bulk(dataset_id, decision)` | 未判断の提案をまとめて採用または却下する。中で1件ずつ同じ処理を呼ぶので、提案ごとに判断結果と履歴が残る（`decided_in_bulk`、履歴の `note` は「まとめて採用」「まとめて却下」）。1件でも反映できなければ全部取り消す |
+| `submit_for_review(id)` | 未判断の提案が残っていたらエラー「未判断のAI提案があります」 |
+
+変更履歴への記録：
+
+- 判断中の提案IDを `set_config('app.suggestion_id', id, true)` で渡し、既存の変更履歴トリガー（と `set_dataset_tags`）が、項目と列が一致する行に `suggestion_id`・`suggested_value`・`ai_decision` を付ける
+- 却下や、今と同じ値の採用ではトリガーが動かないので、関数が自分で1行書く（変更前＝変更後＝今の値）
+- まとめて採用するとき、列の「個人情報」と「機微度」は、途中で CHECK（個人情報の列は公開にできない）を破らない順に反映する
+
+### 採用率
+
+ビュー `ai_suggestion_stats`（`security_invoker`）が、項目×モデル×プロンプトの版ごとに採用・修正・却下・まとめて判断の件数を数える。未判断と置き換え済みは数えない。
+
+- 採用率 ＝ 採用 ÷ 判断済み
+- 修正込み採用率 ＝（採用 ＋ 修正して採用）÷ 判断済み
+
+画面 `/ai-stats`（スチュワードだけ）に、全体・版別・項目別で出す。まとめて採用した分は採用に含め、件数を別に出す。
+
+### 画面
+
+- 編集画面の上部に「AI提案」の枠。「AIに提案させる」、項目ごとの「採用」「修正して採用」「却下」、「まとめて採用」「まとめて却下」（確認ダイアログ付き）
+- 変更履歴の「AI提案・理由」欄に「AI提案：◯◯ → 採用」のように出す
+
+### テスト
+
+- 単体（`tests/unit/ai.test.ts`）：送るデータの項目と伏せ直し、返答の確認、項目ごとの行への分解、偽物の suggester、Claude の suggester（偽のクライアントを渡し、送ったリクエストとエラーを確認）、修正値の読み取り、採用率。本物のAPIは呼ばない
+- DB（`tests/db/ai.test.ts`）：閲覧者は提案を作れない・読めない・判断できない、採用・修正・却下の値と履歴、まとめて採用・却下の履歴、未判断があると承認依頼できない、再提案で置き換え、存在しない列の提案
+
+### 5.7以降のための余地
 
 | 機能 | 後から足すもの | 今の設計で備えている点 |
 |---|---|---|
-| 5.6 AI提案 | `ai_suggestions`（`dataset_id`、`column_id`、`field`、`suggested_value jsonb`、`model`、`prompt_version`、`decision`：`pending`／`accepted`／`modified`／`rejected`、`final_value`、`decided_by`、`decided_at`）。RLSはスチュワードだけ | `field` の名前を `change_logs` と共通にしておけば、そのまま対応づく。採用率は `decision` の集計で出す |
-| 5.5 の拡張（AI提案値と確定値） | `change_logs.suggestion_id`（→ `ai_suggestions`、null可） | 人の確定値は今週から `change_logs` に残る。提案値は `ai_suggestions` 側に持つ |
-| 5.6 AIに送るデータ | なし | サンプルは保存時に伏せてあるので、`dataset_column_samples` と列の統計値をそのまま送れる |
 | 5.7 質問への回答（RAG） | `dataset_embeddings`（`dataset_id`、`content`、`embedding vector`）。Supabase の pgvector 拡張を使う | 検索関数を invoker にしておく方針を引き継げば、閲覧者には公開中だけが根拠になる。埋め込みテーブルにも `datasets` と同じRLSを付ける |
 | 5.8 用語集 | `glossary_terms`（`term`、`definition`）と `tags.glossary_term_id`（null可） | タグを独立したテーブルにしてあるので、後から用語と結びつけられる |
 
@@ -422,14 +514,18 @@ src/
       datasets/
         page.tsx              一覧・検索
         actions.ts            作成・更新・状態の変更・削除
+        ai-actions.ts         AI提案の作成と判断（採用・修正・却下、まとめて）
         new/                  page.tsx, upload-form.tsx
         [id]/                 page.tsx（詳細）と、メタデータ・列・サンプル・変更履歴・状態操作の部品
-        [id]/edit/            page.tsx, edit-form.tsx
+        [id]/edit/            page.tsx, edit-form.tsx, ai-suggestion-panel.tsx（AI提案）
+      ai-stats/               page.tsx（AI提案の採用率。スチュワードだけ）
   components/                 共通UI（バッジ、フォーム部品、表示の整形）
   lib/
     csv/                      decode.ts, parse.ts, profile.ts（統計値）, detect-pii.ts, mask.ts, analyze.ts（まとめて読み取る）
     datasets/                 queries.ts, validation.ts, status.ts（状態と操作の可否）, samples.ts（列ごとのサンプルを行に組み立てる）,
                               payload.ts（create_dataset に渡す内容）, search-params.ts, labels.ts, change-log-format.ts
+    ai/                       build-input.ts（送るデータ）, prompt.ts, suggestion-schema.ts, validate-output.ts,
+                              to-rows.ts, suggester.ts, claude-suggester.ts, fake-suggester.ts, parse-final.ts, adoption.ts
     auth/                     require-user.ts, require-steward.ts
     supabase/                 env.ts, server.ts, proxy-session.ts, errors.ts（DBのエラーを日本語にする）
   types/database.ts
