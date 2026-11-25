@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { requireUser } from '@/lib/auth/require-user';
 import { getTagsByDataset, searchDatasets } from '@/lib/datasets/queries';
-import { parseSearchFilters, type SearchFilters } from '@/lib/datasets/search-params';
+import { listStatuses, parseSearchFilters, type SearchFilters } from '@/lib/datasets/search-params';
 import { DOMAIN_LABELS, SENSITIVITY_LABELS, STATUS_LABELS, keysOf } from '@/lib/datasets/labels';
 import { SensitivityBadges, StatusBadge, TagList } from '@/components/badges';
 import { buttonClass, inputClass, subButtonClass } from '@/components/form-parts';
@@ -11,7 +11,9 @@ import type { Dataset } from '@/types/database';
 export default async function DatasetsPage(props: PageProps<'/datasets'>) {
   const user = await requireUser();
   const filters = parseSearchFilters(await props.searchParams);
-  const datasets = await searchDatasets(filters);
+  // 状態を選んでいなければ廃止を除く（閲覧者はRLSで公開中だけになるので影響しない）
+  const datasets = await searchDatasets({ ...filters, statuses: listStatuses(filters) });
+  const hidingRetired = user.isSteward && filters.statuses.length === 0;
   const tags = await getTagsByDataset(datasets.map((d) => d.id));
 
   return (
@@ -25,7 +27,10 @@ export default async function DatasetsPage(props: PageProps<'/datasets'>) {
         )}
       </div>
       <SearchForm filters={filters} showStatus={user.isSteward} />
-      <p className="text-sm text-slate-500">{datasets.length} 件</p>
+      <p className="text-sm text-slate-500">
+        {datasets.length} 件
+        {hidingRetired && '（廃止は表示していません。「状態」で「廃止」を選ぶと表示します）'}
+      </p>
       <DatasetTable datasets={datasets} tags={tags} />
     </div>
   );

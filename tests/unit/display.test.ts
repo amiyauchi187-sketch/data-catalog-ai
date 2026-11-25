@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSearchFilters } from '../../src/lib/datasets/search-params.ts';
+import { listStatuses, parseSearchFilters } from '../../src/lib/datasets/search-params.ts';
 import { describeLogValue } from '../../src/lib/datasets/change-log-format.ts';
 import { toUserMessage } from '../../src/lib/supabase/errors.ts';
 import type { Profile } from '../../src/types/database.ts';
@@ -11,6 +11,12 @@ test('検索条件を読み取り、選択肢にない値は捨てる', () => {
     { q: '顧客', domains: ['customer'], sensitivities: ['personal'], statuses: [] },
   );
   assert.deepEqual(parseSearchFilters({}), { q: '', domains: [], sensitivities: [], statuses: [] });
+});
+
+test('一覧は、状態を選んでいなければ廃止を除き、選んでいればそのとおりにする', () => {
+  assert.deepEqual(listStatuses(parseSearchFilters({})), ['draft', 'pending_review', 'published']);
+  assert.deepEqual(listStatuses(parseSearchFilters({ status: 'retired' })), ['retired']);
+  assert.deepEqual(listStatuses(parseSearchFilters({ status: ['published', 'retired'] })), ['published', 'retired']);
 });
 
 test('変更履歴の値を日本語にする', () => {

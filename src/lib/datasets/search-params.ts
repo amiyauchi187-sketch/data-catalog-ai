@@ -1,7 +1,7 @@
 // 一覧画面のURLの検索条件（?q=...&domain=...）を読み取る。選択肢にない値は捨てる。
 
 import type { DatasetStatus, Domain, Sensitivity } from '../../types/database.ts';
-import { DOMAIN_LABELS, SENSITIVITY_LABELS, STATUS_LABELS } from './labels.ts';
+import { DOMAIN_LABELS, SENSITIVITY_LABELS, STATUS_LABELS, keysOf } from './labels.ts';
 
 export type SearchFilters = {
   q: string;
@@ -29,4 +29,12 @@ export function parseSearchFilters(params: RawParams): SearchFilters {
     sensitivities: pick(SENSITIVITY_LABELS, params.sensitivity),
     statuses: pick(STATUS_LABELS, params.status),
   };
+}
+
+/** 状態を何も選んでいないときに出す状態。廃止は「状態」で選んだときだけ出す */
+export const DEFAULT_LIST_STATUSES: DatasetStatus[] = keysOf(STATUS_LABELS).filter((s) => s !== 'retired');
+
+/** 一覧で検索する状態。何も選んでいなければ、廃止を除いたもの */
+export function listStatuses(filters: SearchFilters): DatasetStatus[] {
+  return filters.statuses.length > 0 ? filters.statuses : DEFAULT_LIST_STATUSES;
 }

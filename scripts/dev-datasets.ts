@@ -1,6 +1,7 @@
 // 開発用DBに公開しておく、サンプルCSVの5つのデータセットの内容（すべて架空）。
 // 説明やタグは、現場のスチュワードが書きそうな程度にとどめる。評価（eval/qa-cases.json）の質問の言葉を
 // わざと詰め込まない（「探す」部分の力を正しく測るため）。
+// 機微度は docs/requirements.md の「主なデータ」の表に合わせる（顧客＝個人情報を含む、注文＝機密、従業員＝個人情報を含む＋機密など）。
 
 import type { ColumnSensitivity, Domain, Sensitivity, UpdateFrequency } from '../src/types/database.ts';
 
@@ -35,7 +36,9 @@ export const DEV_DATASETS: DatasetSpec[] = [
     legacyNames: ['customers'],
     file: 'customers.csv',
     domain: 'customer',
-    sensitivity: ['confidential', 'personal'],
+    // 要件どおり「個人情報を含む」だけにする（閲覧者には個人情報の列だけが隠れる）。
+    // 「機密」を付けるとデータセット全体が隠れるので付けない。個人情報の列は is_pii で隠れるため、列の機微度は「社内」でよい
+    sensitivity: ['personal'],
     description: '会員登録した顧客のマスタ。1行が1会員。退会した会員も退会日を入れて残している。',
     tags: ['会員', 'マスタ'],
     owner_name: 'CRM推進部',
@@ -45,11 +48,11 @@ export const DEV_DATASETS: DatasetSpec[] = [
     pii: ['氏名', 'フリガナ', 'メール', '電話番号', '生年月日'],
     columns: {
       顧客ID: internal,
-      氏名: confidential,
-      フリガナ: confidential,
-      メール: confidential,
-      電話番号: confidential,
-      生年月日: confidential,
+      氏名: internal,
+      フリガナ: internal,
+      メール: internal,
+      電話番号: internal,
+      生年月日: internal,
       居住地域: { sensitivity: 'internal', description: '都道府県' },
       会員ランク: { sensitivity: 'internal', description: 'ブロンズ／シルバー／ゴールド。毎年4月に見直す' },
       登録日: internal,
