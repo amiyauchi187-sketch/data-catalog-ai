@@ -10,7 +10,8 @@
     "lint": "eslint",
     "test": "node --test \"tests/unit/**/*.test.ts\"",
     "test:db": "node --env-file-if-exists=.env.local --test \"tests/db/**/*.test.ts\"",
-    "generate:samples": "node scripts/generate-samples.mjs"
+    "generate:samples": "node scripts/generate-samples.mjs",
+    "seed:dev": "node --env-file-if-exists=.env.local scripts/seed-dev-datasets.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.12.0",
