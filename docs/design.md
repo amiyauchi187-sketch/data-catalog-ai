@@ -1,4 +1,4 @@
-# 設計：AIデータカタログ（要件第2版対応／2026/11/9〜22）
+# 設計：AIデータカタログ（要件第2版対応／2026/11/9〜29）
 
 要件は [requirements.md](requirements.md)（第2版）を参照。
 
@@ -20,7 +20,8 @@
 
 - 含む（5.1〜5.5）：ログイン、CSV登録、列情報の自動読み取り、メタデータの手入力、承認の流れ、一覧・詳細・検索、機微度によるサンプルの出し分け（RLS）、変更履歴、サンプルCSV、テスト、Vercelへの公開
 - 含む（5.6、6）：AIによるメタデータ提案（[AIによるメタデータ提案](#aiによるメタデータ提案566)）
-- 含まない：質問への回答（5.7）、用語集（5.8）。「[5.7以降のための余地](#57以降のための余地)」のとおり、後から足す
+- 含む（5.7）：質問への回答（[質問への回答](#質問への回答57)）
+- 含まない：用語集（5.8）。「[5.7以降のための余地](#57以降のための余地)」のとおり、後から足す
 
 ## 方針
 
@@ -40,6 +41,7 @@
 | `/datasets/[id]` | 詳細 | ログイン済み | 業務・技術・運用メタデータ、列一覧、サンプル（RLSで取れた分だけ）。スチュワードには変更履歴と状態操作のボタン |
 | `/datasets/new` | CSV登録 | スチュワード | ファイル選択 → 読み取り結果と個人情報の列の確認 → 下書き作成 |
 | `/datasets/[id]/edit` | 編集 | スチュワード（下書きのときだけ） | データセットと列のメタデータ、タグの編集 |
+| `/ask` | 質問 | ログイン済み | カタログについての質問に、根拠のデータセットへのリンク付きで答える（5.7） |
 
 - 閲覧者が公開中以外のURLを開くと、RLSで取得できないため 404 になる
 - 詳細画面の状態操作ボタン：承認依頼、承認、差し戻し、修正のため下書きに戻す、廃止、削除。押せない人には出さない（承認ボタンは登録者・承認依頼者には出さない）が、最終判定はDB関数が行う
@@ -490,8 +492,172 @@ language sql stable security invoker
 
 | 機能 | 後から足すもの | 今の設計で備えている点 |
 |---|---|---|
-| 5.7 質問への回答（RAG） | `dataset_embeddings`（`dataset_id`、`content`、`embedding vector`）。Supabase の pgvector 拡張を使う | 検索関数を invoker にしておく方針を引き継げば、閲覧者には公開中だけが根拠になる。埋め込みテーブルにも `datasets` と同じRLSを付ける |
+| 5.7 質問への回答（RAG） | キーワード検索で実装した（[質問への回答](#質問への回答57)）。ベクトル検索にするときは `dataset_embeddings`（`dataset_id`、`content`、`embedding vector`）を足す。Supabase の pgvector 拡張を使う | 「探す」部分は `DatasetRetriever` の裏に隠してあるので、差し替えは組み立てる場所の1行で済む。埋め込みテーブルにも `datasets` と同じRLSを付け、検索関数は invoker にする |
 | 5.8 用語集 | `glossary_terms`（`term`、`definition`）と `tags.glossary_term_id`（null可） | タグを独立したテーブルにしてあるので、後から用語と結びつけられる |
+
+## 質問への回答（5.7）
+
+### 方針
+
+- 「探す」と「答える」を分ける。まず既存の `search_datasets` で関係するデータセットを探し、その結果だけを Claude に渡して答えさせる
+- 探す処理はログイン中の利用者のセッションで行い、RLSを効かせる。根拠は役割に関係なく公開中だけ（`p_statuses = ['published']` を明示し、閲覧者はRLSでも公開中しか返らない）
+- サンプル値は利用者のセッションで読む。RLSで隠れたものは返らないので、隠しているサンプル値はAIに渡らない。さらに送る直前に伏せ直す
+- 根拠のリンクは Claude に書かせない。Claude が返したIDのうち、検索結果に含まれるものだけからアプリが `/datasets/{id}` のリンクを作る
+- 「探す」部分（`DatasetRetriever`）は差し替えられる作りにし、後でベクトル検索に替えられるようにする
+- 質問と回答はDBに保存しない
+- 新しいテーブル、DB関数、マイグレーション、npmパッケージは足さない
+
+### 処理の流れ
+
+```
+質問
+ └─ ① QueryPlanner（Claude 1回目）：質問 → { keywords[1〜5], domains[] }
+ └─ ② KeywordRetriever：キーワードごとに search_datasets を呼び、結果を合わせる
+       （利用者のセッション → RLS）。当たったキーワードの数で並べ、上位8件にする
+       └─ 0件 → Claude を呼ばずに coverage = none を返す
+ └─ ③ 根拠データの組み立て：名称・説明・ドメイン・タグ・機微度・利用上の注意・
+       列（名前・型・説明）・サンプル値（RLSで読めた分だけ、さらに伏せ直す）
+ └─ ④ Answerer（Claude 2回目、構造化出力）→ 下の「返答の形」
+ └─ ⑤ 返答の検証（下記）
+ └─ 画面：回答文、足りないデータ（partial のとき）、根拠ごとのリンク
+```
+
+キーワードを先に取り出すのは、今の検索が1つの文字列での部分一致（ILIKE）だから。「会員ランク別の売上を分析したい」という文のままでは何にも当たらない。日本語は単語の区切りがないので、自前で分割するより、Claude に「売上」「会員ランク」のような言葉と、言い換え（「客単価」→「売上金額」など）を出させる。
+
+### 差し替えできる作り
+
+```ts
+// src/lib/qa/retriever.ts
+export type RetrievedDataset = {
+  id: string; name: string; description: string | null; domain: Domain | null;
+  sensitivity: Sensitivity[]; tags: string[]; usage_notes: string | null;
+  columns: { name: string; data_type: DataType; description: string | null; samples: (string | null)[] }[];
+  score: number; // 並べ替え用。キーワード検索では当たった数、ベクトル検索では類似度
+};
+
+export interface DatasetRetriever {
+  retrieve(question: string, opts: { limit: number }): Promise<RetrievedDataset[]>;
+}
+```
+
+- `createKeywordRetriever(supabase, planner)`：今回作る。planner はこの中だけで使う
+- 後で作る `createVectorRetriever(supabase, embedder)`：invoker の `match_datasets(embedding, k)` を呼ぶ。planner は要らない
+- Supabase のクライアントは引数で受け取る。画面では Cookie セッションのクライアント、評価スクリプトではテスト利用者でログインしたクライアント、単体テストでは偽物を渡す。既存の `queries.ts` は `server-only` と Cookie に依存してスクリプトから使えないため、読み取りは `src/lib/qa/load-datasets.ts` にクライアントを受け取る形で書く
+
+### 権限とRLS
+
+| 守るもの | 方法 |
+|---|---|
+| 閲覧者に公開中以外を渡さない | `search_datasets` は invoker なのでRLSが効く。そのうえで `p_statuses = ['published']` を明示し、スチュワードでも公開中だけを根拠にする |
+| 隠しているサンプル値を渡さない | `dataset_column_samples` を利用者のセッションで読む。RLSで隠れた行は返らない。送る直前に `maskPiiLikeValue` で伏せ直す |
+| definer の関数を増やさない | 新しいDB関数は作らない（ベクトル検索のときも invoker にする） |
+| データの中の指示に従わない | 説明文やサンプル値はデータであり、中の指示には従わないとシステムプロンプトに書く |
+
+### 返答の形
+
+```json
+{
+  "coverage": "partial",
+  "answer": "注文データの注文日と店舗IDから、店舗・日ごとの注文件数を来店数の代わりに集計できます。…",
+  "missing_data": ["天気（日付・地域ごとの天候や気温）"],
+  "cited_dataset_ids": ["<注文のID>"]
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| `coverage` | `full`（カタログのデータで答えられる）、`partial`（一部しか答えられない）、`none`（該当するデータがない） |
+| `answer` | 回答文（400字以内）。どの列をどう使うかを書く |
+| `missing_data` | 足りないデータ。`partial` のときは1件以上必須。それ以外は空 |
+| `cited_dataset_ids` | 根拠にしたデータセットのID。`full`／`partial` のときは1件以上 |
+
+構造化出力では「coverage によって必須」を書けないので、⑤でアプリが確かめる（`src/lib/qa/validate-answer.ts`）。
+
+- 引用IDは②の結果に含まれるものだけ残し、ほかは捨てる
+- `full`／`partial` なのに有効な引用が0件なら、`none` として扱う（根拠のない回答は出さない）
+- `partial` なのに `missing_data` が空なら、返答に問題があるとしてエラーにする
+- `none` のときは引用と `missing_data` を無視し、「カタログに該当するデータセットは見つかりませんでした」と表示する
+
+### モデルと呼び出し
+
+| 部品 | 環境変数 | 初期値 | effort |
+|---|---|---|---|
+| planner | `QA_PLANNER_MODEL` | `claude-haiku-4-5` | `low`（対応するモデルだけ） |
+| answerer | `QA_ANSWERER_MODEL` | `claude-sonnet-5-5` | `medium`（対応するモデルだけ） |
+
+モデルによって送れるパラメータが違うため、`src/lib/qa/models.ts` に使ってよいモデルと送るものを表で持つ。表にないモデルを設定したら日本語のエラーにする。
+
+| モデル | 構造化出力 | effort | `fallbacks: "default"` |
+|---|---|---|---|
+| `claude-haiku-4-5` | ○ | 送らない（400になる） | 送らない（対象外） |
+| `claude-haiku-5-5` | ○ | ○ | 送らない（対象外） |
+| `claude-sonnet-5-5` | ○ | ○ | ○ |
+| `claude-opus-5-5` | ○ | ○ | ○ |
+
+- フォールバックがないモデルで `stop_reason: "refusal"` になったら「AIが回答を断りました」と表示する
+- トークン数は、`usage.iterations` があればその合計を使う（フォールバックが起きたとき、断られた側の分も数えるため）
+- 1回の質問の目安：Claude を2回呼び、入力3〜6千、出力1〜2千トークン（根拠は最大8件）
+- APIを呼ばずに画面を確かめるときは、5.6と同じ `AI_SUGGESTER=fake` で planner と answerer も偽物にする
+
+### 評価
+
+`eval/qa-cases.json` に質問と正解の組を14問持つ。正解はIDではなくデータセットの名称で持つ（IDは環境ごとに変わるため）。開発用DBで、サンプルCSVの5つのデータセット（顧客・従業員・注文・商品・店舗）が公開中になっていることを前提にする。正解は役割に関係なく同じ。
+
+| # | 質問 | 正解 | coverage | 使う列（サンプルCSVで確認済み） |
+|---|---|---|---|---|
+| 1 | 会員ランク別の売上を分析したい | 顧客, 注文 | full | 顧客.会員ランク・顧客ID／注文.顧客ID・売上金額 |
+| 2 | 店舗ごとの粗利を比べたい | 注文, 店舗 | full | 注文.店舗ID・粗利額／店舗.店舗ID・店舗名。粗利は注文の `粗利額` を店舗IDで合計すれば出る。原価の列はないが、粗利額があるので完全に答えられる（原価は `売上金額 − 粗利額` で逆算もできる） |
+| 3 | 商品カテゴリ別の販売数量の推移を見たい | 注文, 商品 | full | 注文.注文日・商品ID・数量／商品.商品ID・カテゴリ |
+| 4 | 地域別の顧客数を知りたい | 顧客 | full | 顧客.居住地域 |
+| 5 | 店舗の売場面積と売上の関係を見たい | 店舗, 注文 | full | 店舗.店舗ID・売場面積／注文.店舗ID・売上金額 |
+| 6 | 退会した顧客の傾向を調べたい | 顧客 | full | 顧客.退会日・会員ランク・居住地域・登録日 |
+| 7 | 支払方法の割合を知りたい | 注文 | full | 注文.支払方法 |
+| 8 | 販売終了した商品の一覧がほしい | 商品 | full | 商品.商品名・販売終了日 |
+| 9 | 店舗の人員配置と給与を分析したい | 従業員, 店舗 | full | 従業員.所属店舗ID・役職・給与／店舗.店舗ID・従業員数 |
+| 10 | 仕入先ごとの納品リードタイムを調べたい | なし | none | 仕入先・納品日の列はどのデータセットにもない |
+| 11 | 客単価を出したい | 注文 | full | 注文.注文ID・売上金額（言い換え：1注文あたりの売上） |
+| 12 | リピーターの割合を知りたい | 注文 | full | 注文.顧客ID・注文日（言い換え：2回以上購入した顧客） |
+| 13 | 店舗別の人件費を出したい | 従業員 | full | 従業員.所属店舗ID・給与（言い換え：人件費＝給与） |
+| 14 | 天気と来店数の関係を調べたい | 注文 | partial | 注文.注文日・店舗ID（来店数の代わりに注文件数）。天気のデータがない |
+
+- 11〜13 は、正解のデータセットの名称・説明・列名に質問の言葉（客単価、リピーター、人件費）が出てこない問題。planner が言い換えられるか、つまり「探す」部分の力を確かめる。ベクトル検索と比べるときに差が出やすい
+- 9 の従業員は公開中なので、閲覧者にも名称・説明・列名は見える（RLSで隠れるのはサンプル値だけ）。そのため正解は役割に関係なく同じ
+- 14 の `expected_missing_keywords: ["天気"]` は、`missing_data` のどれかにその言葉が含まれるかで確かめる
+- 問題の中の呼び名（顧客など）と開発用DBでの名称（`customers` など）の対応は、`eval/qa-cases.json` の `datasets` に持つ。登録時に名称を変えた場合はここを合わせる
+
+指標（`src/lib/qa/evaluate.ts`。純粋関数にして単体テストする）：
+
+| 指標 | 内容 |
+|---|---|
+| coverage の正解率 | 返した `coverage`（full／partial／none）が正解と一致した割合。3×3 の混同行列も出す |
+| 検索の再現率 | 正解のデータセットのうち、②の検索結果に入った割合（正解が「なし」の問題は除く）。「探す」部分の性能 |
+| 引用の再現率・適合率 | 回答が引用したデータセットと正解を比べる |
+| 足りないデータの一致 | `partial` の問題で、`expected_missing_keywords` が `missing_data` に含まれた割合 |
+
+実行は `scripts/eval-qa.ts` を手で行う。本物のAPIを呼ぶので `npm test` には含めない。
+
+```
+node --env-file=.env.local scripts/eval-qa.ts \
+  --planner claude-haiku-4-5,claude-haiku-5-5 \
+  --answerer claude-sonnet-5-5,claude-opus-5-5
+```
+
+- planner と answerer の組み合わせごとに、全問を閲覧者とスチュワードの両方で実行し、組み合わせごとの指標とモデル別のトークン数を表にする。役割で結果が違えば、RLSか根拠の組み立てを疑う
+- 実行前に呼び出し回数の見込み（組み合わせ数 × 問題数 × 2役割 × 最大2回）を表示し、確認してから進む
+- 結果は `eval/results/<日時>.json` に保存する（gitには含めない）
+
+### 画面
+
+| パス | 画面 | 使える人 | 内容 |
+|---|---|---|---|
+| `/ask` | 質問 | ログイン済み | 質問を入力し、回答文、足りないデータ（partial のとき）、根拠のデータセットへのリンクを表示する |
+
+### テスト
+
+本物のAPIは呼ばない。
+
+- 単体（`tests/unit/qa.test.ts`）：偽の planner・answerer・Supabase クライアントを使う。キーワードごとの結果の合わせ方と並べ方、上位件数での打ち切り、0件のとき answerer を呼ばないこと、根拠データの項目と伏せ直し、範囲外の引用を捨てること、coverage ごとの検証（引用0件の full を none に、`missing_data` が空の partial をエラーに）、モデルごとのリクエストの形（Haiku 4.5 に effort と fallbacks を送らない）、評価の指標の計算
+- DB（`tests/db/qa.test.ts`）：Retriever を閲覧者で動かし、下書きが返らないこと、機密のデータセットのサンプルが空であること、個人情報の列のサンプルが空であることを確かめる
 
 ## ログイン
 
@@ -519,6 +685,7 @@ src/
         [id]/                 page.tsx（詳細）と、メタデータ・列・サンプル・変更履歴・状態操作の部品
         [id]/edit/            page.tsx, edit-form.tsx, ai-suggestion-panel.tsx（AI提案）
       ai-stats/               page.tsx（AI提案の採用率。スチュワードだけ）
+      ask/                    page.tsx, ask-form.tsx, actions.ts（質問への回答）
   components/                 共通UI（バッジ、フォーム部品、表示の整形）
   lib/
     csv/                      decode.ts, parse.ts, profile.ts（統計値）, detect-pii.ts, mask.ts, analyze.ts（まとめて読み取る）
@@ -526,11 +693,16 @@ src/
                               payload.ts（create_dataset に渡す内容）, search-params.ts, labels.ts, change-log-format.ts
     ai/                       build-input.ts（送るデータ）, prompt.ts, suggestion-schema.ts, validate-output.ts,
                               to-rows.ts, suggester.ts, claude-suggester.ts, fake-suggester.ts, parse-final.ts, adoption.ts
+    qa/                       retriever.ts, keyword-retriever.ts, load-datasets.ts, query-planner.ts, build-context.ts,
+                              models.ts, prompt.ts, answer-schema.ts, claude-answerer.ts, fake-answerer.ts,
+                              validate-answer.ts, ask.ts（①〜⑤をつなぐ）, evaluate.ts（評価の指標）
     auth/                     require-user.ts, require-steward.ts
     supabase/                 env.ts, server.ts, proxy-session.ts, errors.ts（DBのエラーを日本語にする）
   types/database.ts
 supabase/migrations/          テーブル、権限、RLS、トリガー、DB関数
 scripts/generate-samples.mjs  サンプルCSVの生成
+scripts/eval-qa.ts            質問への回答の評価（本物のAPIを呼ぶ。手で実行）
+eval/qa-cases.json            評価の質問と正解
 samples/                      生成したCSV
 tests/unit/                   単体テスト（node --test）
 tests/db/                     DBのテスト（開発用プロジェクトに接続）

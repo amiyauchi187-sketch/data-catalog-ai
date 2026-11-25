@@ -1,0 +1,117 @@
+{
+  "description": "質問への回答（要件5.7）の評価用の質問と正解。正解は役割（閲覧者・スチュワード）に関係なく同じ。データはすべて架空のサンプルCSV（samples/）。",
+  "datasets": {
+    "顧客": "customers",
+    "従業員": "employees",
+    "注文": "orders",
+    "商品": "products",
+    "店舗": "stores"
+  },
+  "datasets_note": "左は問題の中で使う呼び名、右は開発用DBでのデータセットの名称。登録時の名称を変えた場合は右側を合わせる。",
+  "cases": [
+    {
+      "id": 1,
+      "question": "会員ランク別の売上を分析したい",
+      "expected_datasets": ["顧客", "注文"],
+      "expected_coverage": "full",
+      "columns": "顧客.会員ランク・顧客ID／注文.顧客ID・売上金額"
+    },
+    {
+      "id": 2,
+      "question": "店舗ごとの粗利を比べたい",
+      "expected_datasets": ["注文", "店舗"],
+      "expected_coverage": "full",
+      "columns": "注文.店舗ID・粗利額／店舗.店舗ID・店舗名",
+      "note": "粗利は注文の「粗利額」を店舗IDごとに合計すれば出る。原価の列はないが、粗利額があるので完全に答えられる（原価は 売上金額 − 粗利額 で逆算もできる）。"
+    },
+    {
+      "id": 3,
+      "question": "商品カテゴリ別の販売数量の推移を見たい",
+      "expected_datasets": ["注文", "商品"],
+      "expected_coverage": "full",
+      "columns": "注文.注文日・商品ID・数量／商品.商品ID・カテゴリ"
+    },
+    {
+      "id": 4,
+      "question": "地域別の顧客数を知りたい",
+      "expected_datasets": ["顧客"],
+      "expected_coverage": "full",
+      "columns": "顧客.居住地域"
+    },
+    {
+      "id": 5,
+      "question": "店舗の売場面積と売上の関係を見たい",
+      "expected_datasets": ["店舗", "注文"],
+      "expected_coverage": "full",
+      "columns": "店舗.店舗ID・売場面積／注文.店舗ID・売上金額"
+    },
+    {
+      "id": 6,
+      "question": "退会した顧客の傾向を調べたい",
+      "expected_datasets": ["顧客"],
+      "expected_coverage": "full",
+      "columns": "顧客.退会日・会員ランク・居住地域・登録日"
+    },
+    {
+      "id": 7,
+      "question": "支払方法の割合を知りたい",
+      "expected_datasets": ["注文"],
+      "expected_coverage": "full",
+      "columns": "注文.支払方法"
+    },
+    {
+      "id": 8,
+      "question": "販売終了した商品の一覧がほしい",
+      "expected_datasets": ["商品"],
+      "expected_coverage": "full",
+      "columns": "商品.商品名・販売終了日"
+    },
+    {
+      "id": 9,
+      "question": "店舗の人員配置と給与を分析したい",
+      "expected_datasets": ["従業員", "店舗"],
+      "expected_coverage": "full",
+      "columns": "従業員.所属店舗ID・役職・給与／店舗.店舗ID・従業員数"
+    },
+    {
+      "id": 10,
+      "question": "仕入先ごとの納品リードタイムを調べたい",
+      "expected_datasets": [],
+      "expected_coverage": "none",
+      "columns": "仕入先・納品日の列はどのデータセットにもない"
+    },
+    {
+      "id": 11,
+      "question": "客単価を出したい",
+      "expected_datasets": ["注文"],
+      "expected_coverage": "full",
+      "columns": "注文.注文ID・売上金額",
+      "note": "言い換えで探せるかを確かめる問題（客単価＝1注文あたりの売上）。"
+    },
+    {
+      "id": 12,
+      "question": "リピーターの割合を知りたい",
+      "expected_datasets": ["注文"],
+      "expected_coverage": "full",
+      "columns": "注文.顧客ID・注文日",
+      "note": "言い換えで探せるかを確かめる問題（リピーター＝2回以上購入した顧客）。"
+    },
+    {
+      "id": 13,
+      "question": "店舗別の人件費を出したい",
+      "expected_datasets": ["従業員"],
+      "expected_coverage": "full",
+      "columns": "従業員.所属店舗ID・給与",
+      "note": "言い換えで探せるかを確かめる問題（人件費＝給与）。完全に答えられる問題として扱う。"
+    },
+    {
+      "id": 14,
+      "question": "天気と来店数の関係を調べたい",
+      "expected_datasets": ["注文"],
+      "expected_coverage": "partial",
+      "expected_missing_keywords": ["天気"],
+      "columns": "注文.注文日・店舗ID（来店数の代わりに注文件数）",
+      "note": "一部しか答えられない問題。天気のデータがない。"
+    }
+  ]
+}

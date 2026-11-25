@@ -14,6 +14,9 @@ export default async function ProtectedLayout({ children }: { children: React.Re
             AIデータカタログ
           </Link>
           <div className="flex items-center gap-4 text-sm">
+            <Link href="/ask" className="text-sky-700 hover:underline">
+              質問する
+            </Link>
             {user.isSteward && (
               <Link href="/ai-stats" className="text-sky-700 hover:underline">
                 AI提案の採用率
